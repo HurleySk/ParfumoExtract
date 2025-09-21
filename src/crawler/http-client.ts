@@ -1,6 +1,5 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
-import pRetry from 'p-retry';
-import UserAgent from 'user-agents';
+import axiosRetry from 'axios-retry';
 import { config } from '../config';
 import { crawlerLogger as logger } from '../utils/logger';
 
@@ -23,11 +22,21 @@ export class HttpClient {
       },
     });
 
+    axiosRetry(this.axiosInstance, {
+      retries: config.crawler.maxRetries,
+      retryDelay: (retryCount) => {
+        return retryCount * 1000;
+      },
+      retryCondition: (error) => {
+        return axiosRetry.isNetworkOrIdempotentRequestError(error) ||
+               (error.response?.status ? error.response.status >= 500 : false);
+      },
+    });
+
     this.axiosInstance.interceptors.request.use(
       async (requestConfig) => {
         await this.enforceRateLimit();
 
-        const userAgent = new UserAgent({ deviceCategory: 'desktop' });
         requestConfig.headers['User-Agent'] = config.crawler.userAgent;
 
         logger.debug(`Making request to: ${requestConfig.url}`);
@@ -86,26 +95,11 @@ export class HttpClient {
   }
 
   async get(url: string, options?: AxiosRequestConfig): Promise<string> {
-    const fetchWithRetry = async () => {
+    try {
       const response = await this.axiosInstance.get(url, options);
       return response.data;
-    };
-
-    try {
-      return await pRetry(fetchWithRetry, {
-        retries: config.crawler.maxRetries,
-        onFailedAttempt: (error) => {
-          logger.warn(
-            `Request failed (attempt ${error.attemptNumber}/${config.crawler.maxRetries + 1}): ${error.message}`
-          );
-        },
-        minTimeout: 1000,
-        maxTimeout: 10000,
-        factor: 2,
-        randomize: true,
-      });
     } catch (error: any) {
-      logger.error(`Failed to fetch ${url} after ${config.crawler.maxRetries} retries`, error);
+      logger.error(`Failed to fetch ${url}: ${error.message}`);
       throw error;
     }
   }

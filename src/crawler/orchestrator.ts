@@ -1,4 +1,3 @@
-import pLimit from 'p-limit';
 import { HttpClient } from './http-client';
 import { FragranceParser } from './parser';
 import { FragranceRepository } from '../database/repository';
@@ -11,7 +10,6 @@ export class CrawlerOrchestrator {
   private httpClient: HttpClient;
   private parser: FragranceParser;
   private repository: FragranceRepository;
-  private limit: any;
   private processedUrls = new Set<string>();
   private failedUrls = new Set<string>();
 
@@ -19,7 +17,6 @@ export class CrawlerOrchestrator {
     this.httpClient = new HttpClient();
     this.parser = new FragranceParser();
     this.repository = new FragranceRepository();
-    this.limit = pLimit(config.crawler.concurrentRequests);
   }
 
   async initialize(): Promise<void> {
@@ -40,13 +37,9 @@ export class CrawlerOrchestrator {
       await this.processFragrances(fragranceUrls, options);
 
       const stats = this.httpClient.getStats();
-      logger.info('Crawl completed', {
-        processed: this.processedUrls.size,
-        failed: this.failedUrls.size,
-        totalRequests: stats.totalRequests,
-      });
+      logger.info(`Crawl completed - processed: ${this.processedUrls.size}, failed: ${this.failedUrls.size}, totalRequests: ${stats.totalRequests}`);
     } catch (error) {
-      logger.error('Crawl failed', error);
+      logger.error(`Crawl failed: ${error}`);
       throw error;
     } finally {
       await this.cleanup();
@@ -109,8 +102,10 @@ export class CrawlerOrchestrator {
     urls: string[],
     options: CrawlerOptions
   ): Promise<void> {
-    const tasks = urls.map(url => this.limit(() => this.processFragrance(url, options)));
-    await Promise.all(tasks);
+    // Process sequentially to respect rate limits
+    for (const url of urls) {
+      await this.processFragrance(url, options);
+    }
   }
 
   private async processFragrance(

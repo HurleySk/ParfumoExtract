@@ -3,6 +3,8 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+package-lock.json
+pnpm-lock.yaml
 
 # Environment variables
 .env
@@ -17,6 +19,10 @@ build/
 # Logs
 logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
 
 # IDE
 .vscode/
@@ -25,19 +31,60 @@ logs/
 *.swo
 *~
 .DS_Store
+*.sublime-workspace
+*.sublime-project
+
+# Test files
+test-*.ts
+test-*.js
+*-test.ts
+*-test.js
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
 
 # Test coverage
 coverage/
 .nyc_output/
+*.lcov
 
 # Database
 *.sql.backup
 *.dump
+*.db
+*.sqlite
+*.sqlite3
 
 # Temporary files
 tmp/
 temp/
 .tmp/
+*.tmp
+*.temp
+*.html
+!src/**/*.html
 
 # Docker
 docker-compose.override.yml
+.dockerignore
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.Spotlight-V100
+.Trashes
+
+# Debug files
+debug.log
+error.log
+
+# Cache
+.cache/
+.parcel-cache/
+
+# Production environment files
+.env.production

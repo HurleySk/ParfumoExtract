@@ -3,12 +3,13 @@ import { CrawlResult, Fragrance, Brand } from '../types';
 import { parserLogger as logger } from '../utils/logger';
 import { config } from '../config';
 
-export class FragranceParser {
+export class FragranceParserV2 {
 
   parseFragrancePage(html: string, url: string): CrawlResult | null {
     try {
       const $ = cheerio.load(html);
 
+      // Updated selectors based on actual Parfumo structure
       const parfumoId = this.extractParfumoId(url);
       const name = this.extractName($);
       const brand = this.extractBrand($);
@@ -56,21 +57,25 @@ export class FragranceParser {
   }
 
   private extractParfumoId(url: string): string {
-    const match = url.match(/\/([^\/]+)\.html$/);
+    // Extract from URL pattern: /Perfumes/Brand/Fragrance-Name
+    const match = url.match(/\/Perfumes\/[^\/]+\/([^\/\?]+)/);
     return match ? match[1] : url.split('/').pop() || '';
   }
 
   private extractName($: cheerio.Root): string {
+    // Multiple possible selectors for fragrance name
     return $('h1[itemprop="name"]').text().trim() ||
-           $('h1.fragrance-name').text().trim() ||
+           $('h1.p_name_h1').text().trim() ||
+           $('.fragrance-name').text().trim() ||
            $('h1').first().text().trim() ||
            'Unknown';
   }
 
   private extractBrand($: cheerio.Root): Brand {
-    const brandName = $('span[itemprop="brand"]').text().trim() ||
+    const brandName = $('span[itemprop="brand"] span[itemprop="name"]').text().trim() ||
+                     $('span[itemprop="brand"]').text().trim() ||
                      $('.brand-name').text().trim() ||
-                     $('a[href*="/brand/"]').first().text().trim() ||
+                     $('a[href*="/Brands/"]').first().text().trim() ||
                      'Unknown';
 
     return { name: brandName };
@@ -78,8 +83,9 @@ export class FragranceParser {
 
   private extractReleaseYear($: cheerio.Root): number | undefined {
     const yearText = $('.release-year').text() ||
+                    $('span:contains("Release year")').parent().find('.data').text() ||
                     $('span:contains("Launch Year")').next().text() ||
-                    $('span:contains("Released")').next().text();
+                    $('div.launch_year').text();
 
     const year = parseInt(yearText.match(/\d{4}/)?.[0] || '');
     return isNaN(year) ? undefined : year;
@@ -87,15 +93,16 @@ export class FragranceParser {
 
   private extractGender($: cheerio.Root): string | undefined {
     const genderText = $('.gender').text().trim() ||
-                      $('span:contains("Gender")').next().text().trim() ||
-                      $('[itemprop="gender"]').text().trim();
+                      $('span:contains("Gender")').parent().find('.data').text().trim() ||
+                      $('[itemprop="gender"]').text().trim() ||
+                      $('.for_gender').text().trim();
 
     return genderText || undefined;
   }
 
   private extractFragranceType($: cheerio.Root): string | undefined {
     const typeText = $('.fragrance-type').text().trim() ||
-                    $('span:contains("Type")').next().text().trim() ||
+                    $('span:contains("Type")').parent().find('.data').text().trim() ||
                     $('[itemprop="category"]').text().trim();
 
     return typeText || undefined;
@@ -103,7 +110,7 @@ export class FragranceParser {
 
   private extractConcentration($: cheerio.Root): string | undefined {
     const concText = $('.concentration').text().trim() ||
-                    $('span:contains("Concentration")').next().text().trim() ||
+                    $('span:contains("Concentration")').parent().find('.data').text().trim() ||
                     $('span:contains("Strength")').next().text().trim();
 
     return concText || undefined;
@@ -112,6 +119,7 @@ export class FragranceParser {
   private extractDescription($: cheerio.Root): string | undefined {
     const descText = $('[itemprop="description"]').text().trim() ||
                     $('.fragrance-description').text().trim() ||
+                    $('.p_desc').text().trim() ||
                     $('.description').first().text().trim();
 
     return descText ? descText.substring(0, 5000) : undefined;
@@ -125,16 +133,19 @@ export class FragranceParser {
   } {
     const ratings: any = {};
 
-    const ratingValue = $('[itemprop="ratingValue"]').text() ||
+    // Main rating
+    const ratingValue = $('[itemprop="ratingValue"]').attr('content') ||
                        $('.rating-value').text() ||
-                       $('.average-rating').text();
+                       $('.average-rating').text() ||
+                       $('.rating_big_alt').text();
 
     if (ratingValue) {
       const parsed = parseFloat(ratingValue.replace(',', '.'));
       if (!isNaN(parsed)) ratings.value = parsed;
     }
 
-    const ratingCount = $('[itemprop="ratingCount"]').text() ||
+    // Vote count
+    const ratingCount = $('[itemprop="ratingCount"]').attr('content') ||
                        $('.rating-count').text() ||
                        $('.votes-count').text();
 
@@ -143,15 +154,17 @@ export class FragranceParser {
       if (!isNaN(parsed)) ratings.count = parsed;
     }
 
-    const longevityText = $('span:contains("Longevity")').parent().find('.rating-bar').attr('data-value') ||
-                         $('span:contains("Longevity")').next('.rating').text();
+    // Longevity rating
+    const longevityText = $('.longevity .rating').text() ||
+                         $('div:contains("Longevity")').find('.rating').text();
     if (longevityText) {
       const parsed = parseFloat(longevityText.replace(',', '.'));
       if (!isNaN(parsed)) ratings.longevity = parsed;
     }
 
-    const sillageText = $('span:contains("Sillage")').parent().find('.rating-bar').attr('data-value') ||
-                       $('span:contains("Sillage")').next('.rating').text();
+    // Sillage rating
+    const sillageText = $('.sillage .rating').text() ||
+                       $('div:contains("Sillage")').find('.rating').text();
     if (sillageText) {
       const parsed = parseFloat(sillageText.replace(',', '.'));
       if (!isNaN(parsed)) ratings.sillage = parsed;
@@ -171,10 +184,11 @@ export class FragranceParser {
       base: [] as string[],
     };
 
-    $('.pyramid-level, .notes-section').each((_, element) => {
+    // Look for pyramid structure
+    $('.pyramid .pyramid-level, .notes-pyramid .level').each((_, element) => {
       const $element = $(element);
-      const levelName = $element.find('.level-name, h3').text().toLowerCase();
-      const noteElements = $element.find('.note-name, .note, a[href*="/note/"]');
+      const levelName = $element.find('.level-name, .pyramid-top, .pyramid-heart, .pyramid-base').text().toLowerCase();
+      const noteElements = $element.find('.note a, a[href*="/Notes/"]');
 
       const noteNames = noteElements.map((_, el) => $(el).text().trim()).get()
         .filter(name => name.length > 0);
@@ -188,8 +202,9 @@ export class FragranceParser {
       }
     });
 
+    // Alternative structure
     if (notes.top.length === 0 && notes.middle.length === 0 && notes.base.length === 0) {
-      $('.notes a, .fragrance-notes a').each((_, el) => {
+      $('.main-notes a, .notes a').each((_, el) => {
         const noteText = $(el).text().trim();
         if (noteText) notes.middle.push(noteText);
       });
@@ -201,19 +216,9 @@ export class FragranceParser {
   private extractPerfumers($: cheerio.Root): string[] {
     const perfumers: string[] = [];
 
-    $('.perfumer-name, a[href*="/perfumer/"], span:contains("Perfumer")').each((_, element) => {
-      const $element = $(element);
-      let name = '';
-
-      if ($element.is('a')) {
-        name = $element.text().trim();
-      } else if ($element.is('span')) {
-        name = $element.next().text().trim();
-      } else {
-        name = $element.text().trim();
-      }
-
-      if (name && name !== 'Perfumer' && !perfumers.includes(name)) {
+    $('.perfumer a, a[href*="/Noses/"]').each((_, element) => {
+      const name = $(element).text().trim();
+      if (name && !perfumers.includes(name)) {
         perfumers.push(name);
       }
     });
@@ -224,16 +229,13 @@ export class FragranceParser {
   private extractAccords($: cheerio.Root): Array<{ name: string; strength: number }> {
     const accords: Array<{ name: string; strength: number }> = [];
 
-    $('.accord-bar, .accord').each((_, element) => {
+    $('.accords .accord').each((_, element) => {
       const $element = $(element);
       const name = $element.find('.accord-name').text().trim() ||
                   $element.text().trim();
 
-      const strengthText = $element.find('.accord-strength').text() ||
-                          $element.attr('data-strength') ||
-                          $element.attr('style')?.match(/width:\s*(\d+)%/)?.[1];
-
-      const strength = parseInt(strengthText || '50');
+      const styleWidth = $element.attr('style')?.match(/width:\s*(\d+)%/)?.[1];
+      const strength = parseInt(styleWidth || '50');
 
       if (name && !name.includes('%')) {
         accords.push({ name, strength: isNaN(strength) ? 50 : strength });
@@ -245,25 +247,18 @@ export class FragranceParser {
 
   private extractSeasons($: cheerio.Root): Array<{ name: string; suitability: number }> {
     const seasons: Array<{ name: string; suitability: number }> = [];
-    const seasonNames = ['spring', 'summer', 'fall', 'autumn', 'winter'];
 
-    $('.season-rating, .seasons').each((_, element) => {
+    $('.season-ratings .season').each((_, element) => {
       const $element = $(element);
-      const text = $element.text().toLowerCase();
+      const name = $element.find('.season-name').text().toLowerCase().trim();
+      const rating = parseInt($element.find('.rating').text() || '50');
 
-      seasonNames.forEach(season => {
-        if (text.includes(season)) {
-          const ratingMatch = text.match(new RegExp(`${season}[^0-9]*(\\d+)`));
-          const rating = ratingMatch ? parseInt(ratingMatch[1]) : 60;
-
-          if (!seasons.find(s => s.name === (season === 'autumn' ? 'fall' : season))) {
-            seasons.push({
-              name: season === 'autumn' ? 'fall' : season,
-              suitability: rating,
-            });
-          }
-        }
-      });
+      if (name && ['spring', 'summer', 'fall', 'autumn', 'winter'].includes(name)) {
+        seasons.push({
+          name: name === 'autumn' ? 'fall' : name,
+          suitability: rating,
+        });
+      }
     });
 
     return seasons;
@@ -272,34 +267,34 @@ export class FragranceParser {
   private extractOccasions($: cheerio.Root): Array<{ name: string; suitability: number }> {
     const occasions: Array<{ name: string; suitability: number }> = [];
 
-    $('.occasion-rating, .occasions, .usage').each((_, element) => {
+    $('.occasions .occasion').each((_, element) => {
       const $element = $(element);
-      const items = $element.find('span, li, a');
+      const name = $element.find('.occasion-name').text().trim();
+      const rating = parseInt($element.find('.rating').text() || '70');
 
-      items.each((_, item) => {
-        const text = $(item).text().trim();
-        const ratingText = $(item).attr('data-rating') || '70';
-        const rating = parseInt(ratingText);
-
-        if (text && !occasions.find(o => o.name === text)) {
-          occasions.push({
-            name: text,
-            suitability: isNaN(rating) ? 70 : rating,
-          });
-        }
-      });
+      if (name) {
+        occasions.push({
+          name,
+          suitability: rating,
+        });
+      }
     });
 
     return occasions;
   }
 
-  parseListPage(html: string): string[] {
+  /**
+   * Parse search results page to extract fragrance URLs
+   * Updated for actual Parfumo search page structure
+   */
+  parseSearchResultsPage(html: string): string[] {
     const $ = cheerio.load(html);
     const urls: string[] = [];
 
-    $('a[href*="/perfume/"], a[href*="/fragrance/"], .fragrance-link').each((_, element) => {
+    // Main grid/list view items
+    $('a[href*="/Perfumes/"]').each((_, element) => {
       const href = $(element).attr('href');
-      if (href) {
+      if (href && href.includes('/Perfumes/') && !href.includes('s_perfumes')) {
         const fullUrl = href.startsWith('http') ? href : `${config.crawler.baseUrl}${href}`;
         if (!urls.includes(fullUrl)) {
           urls.push(fullUrl);
@@ -307,7 +302,22 @@ export class FragranceParser {
       }
     });
 
-    logger.info(`Found ${urls.length} fragrance URLs on list page`);
+    logger.info(`Found ${urls.length} fragrance URLs on search page`);
     return urls;
+  }
+
+  /**
+   * Extract pagination info from search results
+   */
+  extractPaginationInfo(html: string): { currentPage: number; totalPages: number; hasNext: boolean } {
+    const $ = cheerio.load(html);
+
+    // Look for pagination elements
+    const currentPage = parseInt($('.pagination .current').text() || '1');
+    const lastPageLink = $('.pagination a:last').attr('href');
+    const totalPages = lastPageLink ? parseInt(lastPageLink.match(/current_page=(\d+)/)?.[1] || '1') : 1;
+    const hasNext = $('.pagination .next').length > 0;
+
+    return { currentPage, totalPages, hasNext };
   }
 }

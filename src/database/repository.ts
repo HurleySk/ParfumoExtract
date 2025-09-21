@@ -1,6 +1,6 @@
 import { PoolClient } from 'pg';
 import { transaction, query } from './connection';
-import { CrawlResult, Fragrance, Brand, Perfumer, Note, CrawlHistory } from '../types';
+import { CrawlResult, Fragrance, Brand, CrawlHistory } from '../types';
 import { dbLogger as logger } from '../utils/logger';
 
 export class FragranceRepository {
@@ -29,7 +29,7 @@ export class FragranceRepository {
         return fragranceId;
       });
     } catch (error) {
-      logger.error('Failed to save fragrance', error);
+      logger.error(`Failed to save fragrance: ${error}`);
       return null;
     }
   }

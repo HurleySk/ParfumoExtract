@@ -8,16 +8,18 @@ if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir, { recursive: true });
 }
 
-const targets: any[] = [
-  {
+const targets: any[] = [];
+
+if (!config.isProduction) {
+  targets.push({
     target: 'pino-pretty',
     options: {
       colorize: true,
       translateTime: 'SYS:standard',
       ignore: 'pid,hostname',
     },
-  },
-];
+  });
+}
 
 if (config.isProduction) {
   targets.push({

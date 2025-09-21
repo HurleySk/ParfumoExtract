@@ -33,11 +33,7 @@ async function main() {
     }
   }
 
-  logger.info('ParfumoExtract Crawler Starting', {
-    version: '1.0.0',
-    environment: config.env,
-    options,
-  });
+  logger.info(`ParfumoExtract Crawler Starting - version: 1.0.0, environment: ${config.env}`);
 
   const orchestrator = new CrawlerOrchestrator();
 
@@ -46,7 +42,7 @@ async function main() {
     logger.info('Crawl completed successfully');
     process.exit(0);
   } catch (error) {
-    logger.error('Crawl failed with error', error);
+    logger.error(`Crawl failed with error: ${error}`);
     process.exit(1);
   }
 }

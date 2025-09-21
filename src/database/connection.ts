@@ -14,7 +14,7 @@ export const initDatabase = async (): Promise<void> => {
     });
 
     pool.on('error', (err) => {
-      logger.error('Unexpected database error', err);
+      logger.error(`Unexpected database error: ${err}`);
     });
 
     const client = await pool.connect();
@@ -23,7 +23,7 @@ export const initDatabase = async (): Promise<void> => {
 
     logger.info('Database connection established successfully');
   } catch (error) {
-    logger.error('Failed to connect to database', error);
+    logger.error(`Failed to connect to database: ${error}`);
     throw error;
   }
 };

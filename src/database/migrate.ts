@@ -19,7 +19,7 @@ async function runMigration() {
 
     logger.info('Database migration completed successfully');
   } catch (error) {
-    logger.error('Database migration failed', error);
+    logger.error(`Database migration failed: ${error}`);
     throw error;
   } finally {
     await pool.end();
