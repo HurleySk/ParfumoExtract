@@ -1,0 +1,45 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: parfumo-db
+    environment:
+      POSTGRES_USER: parfumo
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-parfumo123}
+      POSTGRES_DB: parfumo_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./src/database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U parfumo"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  crawler:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: parfumo-crawler
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://parfumo:${DB_PASSWORD:-parfumo123}@postgres:5432/parfumo_db
+      CRAWLER_DELAY_MS: ${CRAWLER_DELAY_MS:-2000}
+      CRAWLER_CONCURRENT_REQUESTS: ${CRAWLER_CONCURRENT_REQUESTS:-2}
+      RATE_LIMIT_REQUESTS_PER_HOUR: ${RATE_LIMIT_REQUESTS_PER_HOUR:-1000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - ./logs:/app/logs
+      - ./.env:/app/.env:ro
+    restart: unless-stopped
+    command: ["node", "dist/index.js", "--max-pages", "5", "--skip-existing", "true"]
+
+volumes:
+  postgres_data:
+    driver: local
