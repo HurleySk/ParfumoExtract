@@ -64,6 +64,12 @@ export interface CrawlResult {
   accords: Array<{ name: string; strength: number }>;
   seasons: Array<{ name: string; suitability: number }>;
   occasions: Array<{ name: string; suitability: number }>;
+  fragranceTypes?: Array<{ name: string; votes: number }>;
+  votingDistributions?: Record<string, {
+    distribution: Record<string, number>;
+    average: number | null;
+    raw_average: number | null;
+  }>;
 }
 
 export interface CrawlHistory {

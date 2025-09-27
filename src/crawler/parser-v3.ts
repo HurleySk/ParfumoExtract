@@ -1,9 +1,36 @@
 import * as cheerio from 'cheerio';
+import axios from 'axios';
 import { CrawlResult, Fragrance, Brand } from '../types';
 import { parserLogger as logger } from '../utils/logger';
 import { config } from '../config';
 
 export class FragranceParserV3 {
+  private httpClient = axios.create({
+    headers: {
+      'User-Agent': 'ParfumoExtract/1.0 (Educational Purpose)',
+      'Accept': '*/*',
+      'Accept-Language': 'en-US,en;q=0.9',
+    }
+  });
+
+  async parseFragrancePageWithClassification(html: string, url: string): Promise<CrawlResult | null> {
+    const result = this.parseFragrancePage(html, url);
+    if (!result) return null;
+
+    // Try to fetch classification data
+    try {
+      const classificationData = await this.fetchClassificationData(html, url);
+      if (classificationData) {
+        result.seasons = classificationData.seasons || [];
+        result.occasions = classificationData.occasions || [];
+        result.fragranceTypes = classificationData.fragranceTypes;
+      }
+    } catch (error) {
+      logger.warn(`Failed to fetch classification data for ${url}: ${error}`);
+    }
+
+    return result;
+  }
 
   parseFragrancePage(html: string, url: string): CrawlResult | null {
     try {
@@ -23,6 +50,7 @@ export class FragranceParserV3 {
       const accords = this.extractAccords($);
       const seasons = this.extractSeasons($);
       const occasions = this.extractOccasions($);
+      const votingDistributions = this.extractVotingDistributions($);
 
       const fragrance: Fragrance = {
         parfumoId,
@@ -48,6 +76,7 @@ export class FragranceParserV3 {
         accords,
         seasons,
         occasions,
+        votingDistributions,
       };
     } catch (error) {
       logger.error(`Failed to parse fragrance page: ${url} - ${error}`);
@@ -317,15 +346,183 @@ export class FragranceParserV3 {
   }
 
   private extractSeasons(_$: cheerio.Root): Array<{ name: string; suitability: number }> {
-    // Seasons might not be on main page, return empty for now
-    // Could be enhanced with additional page scraping
+    // Seasons data is loaded dynamically via AJAX and not available in initial HTML
+    // Would require additional API calls to classification endpoints
     return [];
   }
 
   private extractOccasions(_$: cheerio.Root): Array<{ name: string; suitability: number }> {
-    // Occasions might not be on main page, return empty for now
-    // Could be enhanced with additional page scraping
+    // Occasions data is loaded dynamically via AJAX and not available in initial HTML
+    // Would require additional API calls to classification endpoints
     return [];
+  }
+
+  /**
+   * Fetch classification data from AJAX endpoints
+   */
+  private async fetchClassificationData(html: string, url: string): Promise<any> {
+    const $ = cheerio.load(html);
+
+    // Extract parameters needed for AJAX calls
+    const p_id = $('.barfiller_element').first().attr('data-p_id');
+    if (!p_id) return null;
+
+    let jsHash = '';
+    let csrfKey = '';
+
+    // Extract from scripts
+    $('script').each((_, el) => {
+      const script = $(el).html() || '';
+      const chartCallMatch = script.match(/ClassificationChart\(['"]\w+['"],\s*(\d+),\s*['"]([a-f0-9]+)['"]\)/);
+      if (chartCallMatch) {
+        jsHash = chartCallMatch[2];
+      }
+      const csrfMatch = script.match(/csrf_key:\s*['"]([^'"]+)['"]/);
+      if (csrfMatch) {
+        csrfKey = csrfMatch[1];
+      }
+    });
+
+    if (!jsHash || !csrfKey) return null;
+
+    const classificationData: any = {
+      seasons: [],
+      occasions: [],
+      fragranceTypes: [],
+    };
+
+    try {
+      // Fetch pie chart (contains season and occasion data)
+      const pieResponse = await this.httpClient.post(
+        'https://www.parfumo.com/action/perfume/get_classification_pie.php',
+        new URLSearchParams({ p: p_id, h: jsHash, csrf_key: csrfKey }),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': url,
+          }
+        }
+      );
+
+      logger.debug(`Pie chart response status: ${pieResponse.status}`);
+
+      if (pieResponse.status === 200) {
+        // Look for all data arrays in the response
+        const dataArrayMatches = pieResponse.data.matchAll(/chart\d*\.data\s*=\s*(\[[^\]]+\])/g);
+        const matchArray = Array.from(dataArrayMatches);
+        logger.debug(`Found ${matchArray.length} chart data arrays in pie response`);
+
+        if (matchArray.length === 0) {
+          // Log first 500 chars to see what we got
+          logger.debug(`Pie response preview: ${pieResponse.data.substring(0, 500)}`);
+        }
+
+        let foundCount = 0;
+        for (const match of matchArray) {
+          try {
+            const data = JSON.parse((match as RegExpMatchArray)[1].replace(/'/g, '"'));
+            foundCount++;
+            logger.debug(`Found data array ${foundCount}: ${JSON.stringify(data[0])}`);
+
+            // Check if it's season data
+            if (data.length > 0 && data[0].ct_name) {
+              const firstItem = data[0].ct_name.toLowerCase();
+
+              // Check for seasons
+              if (firstItem.includes('winter') || firstItem.includes('spring') ||
+                  firstItem.includes('summer') || firstItem.includes('fall') ||
+                  firstItem.includes('autumn')) {
+                classificationData.seasons = data.map((item: any) => ({
+                  name: item.ct_name,
+                  suitability: parseInt(item.votes) || 0,
+                }));
+                logger.debug(`Found ${data.length} seasons`);
+              }
+              // Check for occasions
+              else if (firstItem.includes('daily') || firstItem.includes('leisure') ||
+                       firstItem.includes('night') || firstItem.includes('business') ||
+                       firstItem.includes('evening')) {
+                classificationData.occasions = data.map((item: any) => ({
+                  name: item.ct_name,
+                  suitability: parseInt(item.votes) || 0,
+                }));
+                logger.debug(`Found ${data.length} occasions`);
+              }
+            }
+          } catch (e) {
+            logger.debug(`Failed to parse data array: ${e}`);
+          }
+        }
+      }
+
+      // Fetch radar chart (contains fragrance type data)
+      const radarResponse = await this.httpClient.post(
+        'https://www.parfumo.com/action/perfume/get_classification_radar.php',
+        new URLSearchParams({ p: p_id, h: jsHash, csrf_key: csrfKey }),
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': url,
+          }
+        }
+      );
+
+      logger.debug(`Radar chart response status: ${radarResponse.status}`);
+
+      if (radarResponse.status === 200) {
+        const typeMatch = radarResponse.data.match(/chart\d*\.data\s*=\s*(\[[^\]]+\])/);
+        if (typeMatch) {
+          try {
+            const types = JSON.parse(typeMatch[1].replace(/'/g, '"'));
+            classificationData.fragranceTypes = types.map((item: any) => ({
+              name: item.ct_name,
+              votes: parseInt(item.votes),
+            }));
+            logger.debug(`Found ${types.length} fragrance types`);
+          } catch (e) {
+            logger.debug(`Failed to parse fragrance types: ${e}`);
+          }
+        }
+      }
+    } catch (error) {
+      logger.debug(`Failed to fetch classification data: ${error}`);
+    }
+
+    return classificationData;
+  }
+
+  /**
+   * Extract voting distributions for various characteristics
+   */
+  extractVotingDistributions($: cheerio.Root): Record<string, any> {
+    const distributions: Record<string, any> = {};
+
+    $('.barfiller_element').each((_, element) => {
+      const $element = $(element);
+      const type = $element.attr('data-type');
+      const votingData = $element.attr('data-voting_distribution');
+      const totalVotings = $element.attr('data-total_votings');
+
+      if (type && votingData) {
+        try {
+          // Decode base64-encoded voting distribution
+          const decoded = Buffer.from(votingData, 'base64').toString('utf-8');
+          const parsed = JSON.parse(decoded);
+
+          distributions[type] = {
+            distribution: parsed,
+            average: totalVotings ? parseFloat(totalVotings) / 10 : null,
+            raw_average: totalVotings ? parseFloat(totalVotings) : null,
+          };
+        } catch (error) {
+          // Failed to decode voting data
+        }
+      }
+    });
+
+    return distributions;
   }
 
   /**
